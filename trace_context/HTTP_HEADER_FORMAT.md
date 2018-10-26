@@ -1,13 +1,14 @@
 # Trace context HTTP headers format
 
-This section describes the binding of the distributed trace context to `traceparent`
+This section describes how to propagate distributed trace context through the `traceparent`
 and `tracestate` http headers.
 
 ## Relationship between the headers
 
-The `traceparent` header represents the incoming request in a tracing system in
-a common format. The `tracestate` header includes the parent in a potentially
-vendor-specific format.
+- `traceparent` represents the incoming request in a tracing system in a common format. This includes
+the `trace-id` identifier and information about sampling decisions.
+- `tracestate` includes a dictionary specific to the tracing libraries or agents that interact with
+a trace. These are typically specific to vendors or open source projects.
 
 For example, a client traced in the congo system adds the following headers
 to an outbound http request.
@@ -51,7 +52,7 @@ which tracing system corresponds with `traceparent`. In this case, since
 
 ## Header name
 
-In order to increase interoperability across multiple protocols and encourage successful integration by default it is recommended to keep the header name lower case. Header name is a single word without any delimiters like hyphen (`-`).
+In order to increase interoperability across multiple protocols and encourage successful integrations, it is recommended to keep the header name lower case. Header name is a single word without any delimiters like hyphen (`-`).
 
 Header name: `traceparent`
 
@@ -83,8 +84,9 @@ trace-flags      = 2HEXDIG   ; 8 bit flags. Currently only one bit is used. See 
 
 ### Trace-id
 
-Is the ID of the whole trace forest. It is represented as a 16-bytes array, for example,
-`4bf92f3577b34da6a3ce929d0e0e4736`. All bytes `0` are considered invalid.
+The single global identifier of a trace. It is represented as a 16-bytes array, for example,
+`4bf92f3577b34da6a3ce929d0e0e4736`. All bytes `0` are considered invalid. `trace-id` does not change over the
+lifetime of the trace.
 
 `Trace-id` is used to uniquely identify a distributed trace. So implementation should generate globally unique
 values. Many algorithms of unique identification generation are based on some constant part - time or host
