@@ -1,50 +1,52 @@
 # Trace context HTTP headers format
 
-This section describes the binding of the distributed trace context to
-`traceparent` and `tracestate` http headers.
+This section describes the format of `traceparent` and `tracestate` in HTTP headers, which are used to provide trace contexts.
 
-## Relationship between the headers
+## Relationship between traceparent and tracestate
 
-The `traceparent` header represents the incoming request in a tracing system in
-a common format. The `tracestate` header includes the parent in a potentially
-vendor-specific format.
+[TODO: consider showing a generic format of the traceparent and trace state]
+[TODO: nit: why are trace states prepended instead of appended? It is easier to follow traces if they are presented in call order, rather than in reverse. For long traces, it becomes easier to see where calls diverge).
 
-For example, a client traced in the congo system adds the following headers to
-an outbound http request.
+In an incoming HTTP header, `traceparent` provides information about the receiver's predecessor in the distributed system.
+
+The `traceparent` header represents the incoming request in a tracing system in a common format. The `tracestate` header includes the parent in a potentially vendor-specific format.
+
+Consider a trace originating from the `congo` system. Since it is the root of the trace, the `congo` system writes the following header fields to its outbound HTTP request.
 
 ``` http
 traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
 tracestate: congo=BleGNlZWRzIHRohbCBwbGVhc3VyZS4
 ```
+These values correspond respectively to a self-chosen unique identifier of the `congo` server, as well as an arbitrary value corresponding to the `congo` key.
 
-If the receiving server is traced in the `rojo` tracing system, it carries over
-the state it received and adds a new entry with the position in its trace.
+When a receiving server, say `rojo`, receives the HTTP request, it updates the `traceparent` field with its own identifier, and prepends `tracestate` with an entry for itself:
 
 ``` http
 traceparent: 00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01
 tracestate: rojo=00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01,congo=BleGNlZWRzIHRohbCBwbGVhc3VyZS4
 ```
 
-You'll notice that the `rojo` system reuses the value of `traceparent` in its
-entry in `tracestate`. This means it is a generic tracing system. Otherwise,
-`tracestate` entries are opaque.
+Notice that the `rojo` system used its system identifier in both the `traceparent` and `tracestate` fields. This means that it is a generic tracing system. Otherwise,`tracestate` entries are opaque.
+[TODO - what does it mean "generic tracing system"? What does a "specialized" tracing system do?]
+[TODO - Why "otherwise entries are opaque"? Why this confusing rule? tracestate should be uniformly treated as opaque, or follow some well-specified rule for interpretation. Conditional handling increases the complexity of the system and adds on to the parsing load of the server for no foreseeable gain.)
 
-If the receiving server of the above is `congo` again, it continues from its
-last position, overwriting its entry with one representing the new parent.
+If the receiving server of the above is `congo` again, it continues from its last position [TODO -- what does "its last position" mean?], overwriting its entry with one representing the new parent.
+[TODO - why should it be overwritten? Doesn't this defeat the purpose of the trace, since it no longer represents a happens-before timeline of which call came before another? Also, doesn't this imply that systems in the trace must all have unique names? (eg. no other system can be called `congo` in this distributed system). If that is the case, it should be specified somewhere.]
 
 ``` http
 traceparent: 00-0af7651916cd43dd8448eb211c80319c-b9c7c989f97918e1-01
 tracestate: congo=lZWRzIHRoNhcm5hbCBwbGVhc3VyZS4,rojo=00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01
 ```
 
-Notice when `congo` wrote its `traceparent` entry, it reuses the last trace ID
-which helps in consistency for those doing correlation. However, the value of
+Notice when `congo` wrote its `traceparent` entry, it reuses the last trace ID [TODO - what is a trace ID? This term should be defined earlier] which helps in consistency for those doing correlation. However, the value of
 its entry `tracestate` is opaque and different. This is ok.
 
 Finally, you'll see `tracestate` retains an entry for `rojo` exactly as it was,
 except pushed to the right. The left-most position lets the next server know
 which tracing system corresponds with `traceparent`. In this case, since `congo`
 wrote `traceparent`, its `tracestate` entry should be left-most.
+
+[TODO -- this explanation contradicts an earlier paragraph. This paragraph says we should prepend congo to tracestate, but the earlier paragraph says we should overwrite the congo entry. If the correct action is to remove the congo entry (if it exists), and then prepend the congo entry, then this should be clarified].
 
 # Traceparent field
 
@@ -86,16 +88,19 @@ The following `version-format` definition is used for version `00`.
 ``` abnf
 version-format   = trace-id "-" parent-id "-" trace-flags
 
-trace-id         = 32HEXDIGLC  ; 16 bytes array identifier. All zeroes forbidden
-parent-id        = 16HEXDIGLC  ; 8 bytes array identifier. All zeroes forbidden
-trace-flags      = 2HEXDIGLC   ; 8 bit flags. Currently only one bit is used. See below for details
+[TODO -- the examples quoted in this document include the version ID, so it should be version-id "-" trace-id "-" parent-id "-" trace-flags.]
+
+version-id       = 2HEXDIGLC   ; 2 hex digits representing the version id. A version id of `ff` is invalid.
+trace-id         = 32HEXDIGLC  ; 16 hex digit identifier. An identifier of all zeroes is invalid.
+parent-id        = 16HEXDIGLC  ; 8 hex digit identifier. An identifier of all zeroes is invalid.
+trace-flags      = 2HEXDIGLC   ; 2 hex digits representing trace flag values . Currently only one bit is used. See below for details.
 ```
 
 ### Trace-id
 
-Is the ID of the whole trace forest. It is represented as a 16-bytes array, for
-example, `4bf92f3577b34da6a3ce929d0e0e4736`. All bytes `0` are considered
-invalid.
+Is the ID of the whole trace forest. It is represented as a 16-byte array of hexadecimal digits, for
+example, `4bf92f3577b34da6a3ce929d0e0e4736`. A trace id containing all `0`s is considered
+invalid. [TODO - nit: this is non-uniform with the version id field. Either make 00 invalid for version-id as well, or change this such that ffffff...ff is invalid for trace and parent id.]
 
 `Trace-id` is used to uniquely identify a <a>distributed trace</a>. So implementation
 should generate globally unique values. Many algorithms of unique identification
@@ -117,6 +122,8 @@ specification.
 Implementations HAVE TO ignore the `traceparent` when the `trace-id` is invalid.
 For instance, if it contains non-allowed characters.
 
+[TODO - consider substituting "HAVE TO" with "MUST".]
+
 ### Parent-id
 
 Is the ID of this call as known by the caller. It is also known as `span-id` as
@@ -129,31 +136,28 @@ For instance, if it contains non-allowed characters.
 
 ## Trace-flags
 
-An [8-bit field](https://en.wikipedia.org/wiki/Bit_field) that controls tracing
-flags such as sampling, trace level etc. These flags are recommendations given
-by the caller rather than strict rules to follow for three reasons:
+An [8-bit field](https://en.wikipedia.org/wiki/Bit_field) that recommends downstream behavior of trace systems. The behavior is a recommendation or hint to the recipient system, and its compliance is not enforced for the following reasons:
 
 1. Trust and abuse
 2. Bug in caller
 3. Different load between caller service and callee service might force callee
    to down sample.
 
-You can find more in security section of this specification.
+You can find more in security section of this specification. [TODO -- there is nothing in the security section that talks about any of these.]
 
-Like other fields, `trace-flags` is hex-encoded. For example, all `8` flags set
-would be `ff` and no flags set would be `00`.
+Like other fields, `trace-flags` is hex-encoded. For example, with all 8 flags set, this field would read `ff`. Conversely, if none of the flags are set, this field would read `00`.
 
 As this is a bit field, you cannot interpret flags by decoding the hex value and
 looking at the resulting number. For example, a flag `00000001` could be encoded
 as `01` in hex, or `09` in hex if present with the flag `00001000`. A common
-mistake in bit fields is forgetting to mask when interpreting flags.
+mistake in bit fields is forgetting to mask when interpreting flags. [TODO: nit: this paragraph is probably not required.]
 
 Here is an example of properly handing trace flags:
 
 ```java
 static final byte FLAG_RECORDED = 1; // 00000001
 ...
-boolean recorded = (traceFlags & FLAG_RECORDED) == FLAG_RECORDED
+boolean recorded = (traceFlags & FLAG_RECORDED) == FLAG_RECORDED;
 ```
 
 Current version of specification only supports a single flag called `recorded`.
@@ -162,7 +166,7 @@ Current version of specification only supports a single flag called `recorded`.
 
 When set, the least significant bit documents that the caller may have recorded
 trace data. A caller who does not record trace data out-of-band leaves this flag
-unset.
+unset. [TODO: this paragraph is in conflict with the specification of the flags. In the original spec, in a preceding paragraph: "these flags are recommendations given by the caller", meaning that the caller wants the callee to record the trace data. This paragraph now says the flag value indicates whether the caller recorded the trace data. Which is it? Is it a statement that the caller recorded the data, or a statement that the callee should record the data?]
 
 Many distributed tracing scenarios may be broken when only a subset of calls
 participated in a <a>distributed trace</a> were recorded. At certain load recording
@@ -248,6 +252,7 @@ header will be additive to the current one.
 
 Implementation should follow the following rules when parsing headers with an
 unexpected format:
+[TODO: It is not a good idea to do forward-compatibility. This may prevent the meaningful introduction of new fields and behavior. It is probably a better idea to request that later versions of this standard be backward compatible with older versions.]
 
 1. Pass thru services should not analyze version. Pass thru service needs to
    expect that headers may have bigger size limits in the future and only
@@ -354,7 +359,7 @@ in the beginning of key like `fw529a3039@dt` - `fw529a3039` is a tenant id and
 Value is opaque string up to 256 characters printable ASCII
 [RFC0020](https://www.rfc-editor.org/info/rfc20) characters (i.e., the range
 0x20 to 0x7E) except comma `,` and `=`. Note that this also excludes tabs,
-newlines, carriage returns, etc.
+newlines, carriage returns, etc. [TODO: there should be a description of how quotes are handled. Will they be treated as part of the value?]
 
 ``` abnf
 value    = 0*255(chr) nblk-chr
@@ -380,6 +385,8 @@ system, went through a system named `rojo` and later returned to `congo`, the
 
 Rather, the entry would be rewritten to only include the most recent position:
 `congo=congosSecondPosition,rojo=rojosFirstPosition`
+
+[TODO - why this confusing requirement? In a distributed system with lots of back-and-forth calls between a small number of systems, this will cause the ordering to become messed up and unreliable for any kind of tracing or event ordering. If there is a good rationale for doing this, a good explanation should be included.]
 
 **Limits:**
 
@@ -453,7 +460,7 @@ Here is the list of allowed mutations:
 4. **Restarting trace**. All properties - `trace-id`, `parent-id`, `trace-flags`
    are regenerated. This mutation is used in the services defined as a front
    gate into secure networks and eliminates a potential denial of service attack
-   surface.
+   surface. [TODO - this should be defined earlier. Also the reason why this prevents potential DoS attacks is not explained.]
 
 Libraries and platforms MUST NOT make any other mutations to the `traceparent`
 header.
